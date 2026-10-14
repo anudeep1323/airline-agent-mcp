@@ -4,6 +4,7 @@ Agent evals: run every case in agent_evals.json against the REAL agent (Claude +
   python3 agent_eval.py                 all cases once         (~$0.25 on Opus 5.5, needs ANTHROPIC_API_KEY)
   python3 agent_eval.py --repeat 3      each case 3x: agents vary run to run, so measure HOW OFTEN a case passes
   python3 agent_eval.py --only seat-taken cancel-needs-approval
+  python3 agent_eval.py --min-score 0.9 exit code 1 if under 90% passed: lets CI fail the build
 
 Per case: fresh copy of the database -> optional setup_sql (plant data, e.g. an attack) -> log in as the case's customer -> run the turns -> grade:
   turns                                                  chat messages; a {"sql": [...]} turn changes the DB between
@@ -126,6 +127,7 @@ async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--repeat", type=int, default=1)
     ap.add_argument("--only", nargs="*")
+    ap.add_argument("--min-score", type=float, default=0.0)
     args = ap.parse_args()
     with open(os.path.join(HERE, "agent_evals.json")) as f:
         cases = [c for c in json.load(f) if not args.only or c["id"] in args.only]
@@ -167,6 +169,9 @@ async def main():
         stamp = time.strftime("%Y%m%d-%H%M%S")
         with open(os.path.join(HERE, "eval_results", f"run-{stamp}.json"), "w") as f:
             json.dump({"score": f"{passed}/{len(results)}", "cost": total_cost, "results": results}, f, indent=1)
+    if passed / len(results) < args.min_score:
+        print(f"FAILED the gate: {passed}/{len(results)} is under the minimum {args.min_score:.0%}")
+        sys.exit(1)                                       # a non-zero exit code is what makes CI go red
 
 
 if __name__ == "__main__":

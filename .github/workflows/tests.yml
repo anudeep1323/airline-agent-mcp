@@ -1,0 +1,52 @@
+# Runs on every push and pull request, and on demand from the Actions tab ("Run workflow").
+#   job 1 "tests": pytest with a fake Claude: free, no secrets, ~1 min
+#   job 2 "evals": the real agent against agent_evals.json, only if job 1 passed; needs the
+#                  ANTHROPIC_API_KEY repository secret (skipped with a notice until it exists), ~$0.23 per run
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-agent.txt
+      - run: python -m pip install -r requirements-agent.txt
+      - run: python -m pytest -v
+
+  evals:
+    needs: tests                                    # don't spend money on a build whose code tests already fail
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}   # GitHub masks it in logs; never printed
+    steps:
+      - name: Skip if no API key secret is set
+        if: env.ANTHROPIC_API_KEY == ''
+        run: echo "::notice::ANTHROPIC_API_KEY secret not set, skipping real-Claude evals"
+      - uses: actions/checkout@v4
+        if: env.ANTHROPIC_API_KEY != ''
+      - uses: actions/setup-python@v5
+        if: env.ANTHROPIC_API_KEY != ''
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-agent.txt
+      - run: python -m pip install -r requirements-agent.txt
+        if: env.ANTHROPIC_API_KEY != ''
+      - run: python agent_eval.py --min-score 0.9   # red build if fewer than 90% of cases pass
+        if: env.ANTHROPIC_API_KEY != ''
+      - uses: actions/upload-artifact@v4            # keep the run's answers + scores to read later
+        if: always() && env.ANTHROPIC_API_KEY != ''
+        with:
+          name: eval-results
+          path: eval_results/run-*.json

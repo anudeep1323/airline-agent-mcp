@@ -6,6 +6,9 @@
 !ARCHITECTURE.md
 !requirements-agent.txt
 !pytest.ini
+!.github/
+!.github/workflows/
+!.github/workflows/*.yml
 
 # the agent stack
 !airline_server.py

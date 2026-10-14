@@ -1,5 +1,7 @@
 # airline-agent-mcp
 
+[![tests](https://github.com/anudeep1323/airline-agent-mcp/actions/workflows/tests.yml/badge.svg)](https://github.com/anudeep1323/airline-agent-mcp/actions/workflows/tests.yml)
+
 An AI support agent for a (fictional) airline, taken from prototype to a production-style service:
 an **MCP tool server**, a **FastAPI** service with **JWT auth**, **human-in-the-loop approvals**, an **append-only audit log**,
 **prompt-injection defences**, an **eval harness** for the agent's behaviour and a **pytest** suite for the code.
