@@ -244,3 +244,21 @@ Real numbers, stale-memory-recheck x3 (seat changed between turns):
 | guaranteed fresh? | depends on the model choosing to re-check | yes, in code |
 Full eval: 17/17, $0.227, newly failing none. pytest: 28 passed (new test: REST change between turns reaches Claude).
 Bugs found on the way: CONVERSATIONS leaked between tests; results matched to calls by id across the whole history.
+
+## Build 11: CI with GitHub Actions (.github/workflows/tests.yml)
+
+Decision: **pytest + real-Claude evals on every push** (user's pick; few pushes expected). Evals run only after tests pass,
+gated at 90% (`agent_eval.py --min-score 0.9` exits 1 below it), and skip with a notice if the API key secret is missing.
+Rejected: pytest only + a manual eval button (cheaper per push, but behaviour regressions wait for a human).
+
+```mermaid
+flowchart LR
+    P[git push] --> T["job tests: fresh Ubuntu<br/>pip install pinned versions<br/>pytest (fake Claude)"]
+    T -->|pass| E["job evals: real Claude<br/>ANTHROPIC_API_KEY repo secret (masked)<br/>gate: >= 90%"]
+    T -->|fail| X[red build, evals skipped: no money spent]
+    E --> A[eval results uploaded as an artifact]
+```
+
+Real runs: #1 red (unpinned `mcp` installed 2.x on GitHub, FastMCP renamed) -> pinned all 9 packages -> #2 green
+(28 passed in 14.2 s, evals skipped: no secret) -> secret added -> #3 green: tests 47 s (28 passed), evals 98 s,
+17/17, $0.226. Key never appears in logs.
