@@ -1,0 +1,32 @@
+# Allow-list: this folder is a private lab; only the airline agent stack is published.
+# Everything is ignored unless it is re-included below.
+*
+!.gitignore
+!README.md
+!ARCHITECTURE.md
+!requirements-agent.txt
+!pytest.ini
+
+# the agent stack
+!airline_server.py
+!passwords.py
+!auth.py
+!audit.py
+!audit_report.py
+!agent_core.py
+!airline_agent.py
+!airline_service.py
+!bookings_api.py
+!ui.py
+
+# checks, evals, tests
+!airline_check.py
+!auth_check.py
+!rate_limit_check.py
+!agent_identity_check.py
+!agent_eval.py
+!agent_evals.json
+!eval_results/
+!eval_results/run-*.json
+!tests/
+!tests/*.py

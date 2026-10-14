@@ -1,0 +1,9 @@
+anthropic
+mcp
+fastapi
+uvicorn
+httpx
+pyjwt
+pydantic
+streamlit
+pytest
