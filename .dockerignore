@@ -1,0 +1,16 @@
+# Never send these into an image build (keeps images small and secrets out)
+.venv
+__pycache__
+.pytest_cache
+.git
+.cursor
+*.db
+*.jsonl
+eval_results
+lake
+index
+docs
+extracted
+CLAUDE.md
+LEARNING.md
+.env

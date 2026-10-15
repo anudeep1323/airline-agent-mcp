@@ -50,3 +50,34 @@ jobs:
         with:
           name: eval-results
           path: eval_results/run-*.json
+
+  docker:
+    needs: [tests, evals]                           # only package code that passed every check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write                               # lets GITHUB_TOKEN publish to ghcr.io (no extra secret)
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t airline-agent:ci .
+      - name: Smoke test, start it like production would and poke it
+        run: |
+          docker run -d --name api -p 8000:8000 -e JWT_SECRET="$(openssl rand -hex 32)" airline-agent:ci
+          for i in $(seq 1 30); do curl -sf localhost:8000/ready && break; sleep 1; done
+          echo; curl -sf localhost:8000/ready | grep -q '"cancel_booking"'            # MCP child started inside the container
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8000/v1/bookings/ABC123)" = 401   # auth is on
+          docker image ls airline-agent:ci --format 'image size: {{.Size}}'
+      - name: Show container logs if anything failed
+        if: failure()
+        run: docker logs api
+      - name: Publish to GitHub Container Registry (main branch only)
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          IMAGE=ghcr.io/${{ github.repository }}
+          docker tag airline-agent:ci $IMAGE:latest
+          docker tag airline-agent:ci $IMAGE:${{ github.sha }}            # every commit gets its own, never-overwritten tag
+          docker push $IMAGE:latest
+          docker push $IMAGE:${{ github.sha }}

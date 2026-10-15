@@ -44,6 +44,15 @@ python3 -m uvicorn airline_service:app --port 8000                     # termina
 python3 -m streamlit run ui.py                                          # terminal 2: chat UI on :8501
 ```
 
+Or with Docker (same image runs the API and the UI):
+
+```bash
+export JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+docker compose up --build          # API on :8000, UI on :8501
+```
+
+Every push to `main` that passes tests and evals publishes the image to `ghcr.io/anudeep1323/airline-agent-mcp`.
+
 Dev test accounts are seeded from `DEV_USERS` in `airline_server.py` (for local development only).
 
 ```bash

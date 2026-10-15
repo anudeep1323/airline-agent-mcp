@@ -1,0 +1,19 @@
+# Your two terminals, as two containers from ONE image:   docker compose up --build
+# Needs ANTHROPIC_API_KEY and JWT_SECRET in the shell that runs it (never written in this file).
+services:
+  api:
+    build: .
+    image: ghcr.io/anudeep1323/airline-agent-mcp:latest
+    ports: ["8000:8000"]
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET to a random 32+ char string}
+
+  ui:
+    image: ghcr.io/anudeep1323/airline-agent-mcp:latest     # same image, different command
+    command: ["python", "-m", "streamlit", "run", "ui.py", "--server.address", "0.0.0.0",
+              "--server.port", "8501", "--server.headless", "true"]
+    ports: ["8501:8501"]
+    environment:
+      AIRLINE_API: http://api:8000          # "api" = the other container's name; Docker's network resolves it
+    depends_on: [api]

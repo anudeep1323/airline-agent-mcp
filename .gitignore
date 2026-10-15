@@ -6,6 +6,9 @@
 !ARCHITECTURE.md
 !requirements-agent.txt
 !pytest.ini
+!Dockerfile
+!.dockerignore
+!docker-compose.yml
 !.github/
 !.github/workflows/
 !.github/workflows/*.yml
