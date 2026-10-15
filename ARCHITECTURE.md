@@ -262,3 +262,21 @@ flowchart LR
 Real runs: #1 red (unpinned `mcp` installed 2.x on GitHub, FastMCP renamed) -> pinned all 9 packages -> #2 green
 (28 passed in 14.2 s, evals skipped: no secret) -> secret added -> #3 green: tests 47 s (28 passed), evals 98 s,
 17/17, $0.226. Key never appears in logs.
+
+## Build 12: container image + CI build/smoke test/publish (Dockerfile, docker-compose.yml)
+
+Decision: **one image, two containers** (API: uvicorn; UI: streamlit, `AIRLINE_API=http://api:8000` via Docker's network).
+Rejected: two images (smaller each, but two things to build and version). Verified in CI only (no Docker running locally).
+
+```mermaid
+flowchart LR
+    T[tests] --> E[evals] --> D["job docker:<br/>docker build (609 MB)<br/>docker run + /ready + 401 check"]
+    D -->|main only| G["ghcr.io/anudeep1323/airline-agent-mcp<br/>:latest and :<commit sha>"]
+    G --> C["docker compose up:<br/>api :8000 + ui :8501<br/>secrets from env at run time"]
+```
+
+Real run 38759253517: tests 55 s, evals 5 s (no secret: skipped), docker 63 s. Container ready in ~3 s with
+4 tools (MCP child works inside it), unauthenticated booking request -> 401. Pushed :latest and :1fce1da
+(digest sha256:6aa98817...). Image is 609 MB, mostly Streamlit's dependencies (pandas, pyarrow): the cost of option A.
+Mistake on the way: on macOS `Dockerfile` and `dockerfile` are the same file; the old RAG one was overwritten and
+restored as Dockerfile.rag (kept local).
