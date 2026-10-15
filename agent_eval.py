@@ -100,6 +100,7 @@ async def run_case(agent, case):
                 conn.execute(sql)
         conn.close()
     messages, tools, approvals, cost, t0 = [], [], [], 0.0, time.perf_counter()
+    tokens = {"input": 0, "cache_read": 0, "cache_write": 0, "output": 0}
     for turn in case["turns"]:
         if isinstance(turn, dict):                        # outside change between two chat messages
             conn = airline_server.db()
@@ -112,9 +113,14 @@ async def run_case(agent, case):
         tools += [s["name"] for s in r["steps"] if s["type"] == "tool"]
         approvals += r["approvals"]
         cost += r["cost"]
+        for st in (s for s in r["steps"] if s["type"] == "claude"):
+            tokens["input"] += st["tokens_in"]
+            tokens["output"] += st["tokens_out"]
+            tokens["cache_read"] += st.get("cache_read", 0)
+            tokens["cache_write"] += st.get("cache_write", 0)
     fails = grade(case, tools, approvals, r["answer"])
     return {"id": case["id"], "passed": not fails, "fails": fails, "tools": tools, "answer": r["answer"],
-            "cost": round(cost, 4), "seconds": round(time.perf_counter() - t0, 1)}
+            "cost": round(cost, 4), "seconds": round(time.perf_counter() - t0, 1), **tokens}
 
 
 def previous_run():
@@ -129,6 +135,9 @@ async def main():
     ap.add_argument("--repeat", type=int, default=1)
     ap.add_argument("--only", nargs="*")
     ap.add_argument("--min-score", type=float, default=0.0)
+    ap.add_argument("--model", help="e.g. claude-haiku-5-5 (default: AGENT_MODEL or claude-opus-5-5)")
+    ap.add_argument("--effort", help="low | medium | high")
+    ap.add_argument("--no-cache", action="store_true", help="turn prompt caching off")
     args = ap.parse_args()
     with open(os.path.join(HERE, "agent_evals.json")) as f:
         cases = [c for c in json.load(f) if not args.only or c["id"] in args.only]
@@ -139,7 +148,9 @@ async def main():
     async with stdio_client(SERVER) as (read, write):
         async with ClientSession(read, write) as mcp:
             await mcp.initialize()
-            agent = Agent(mcp, (await mcp.list_tools()).tools)
+            agent = Agent(mcp, (await mcp.list_tools()).tools, model=args.model, effort=args.effort,
+                          cache=False if args.no_cache else None)
+            print(f"config: model={agent.model} effort={agent.effort} cache={'on' if agent.cache else 'off'}\n")
             for case in cases:
                 for n in range(args.repeat):
                     res = await run_case(agent, case)
@@ -153,8 +164,11 @@ async def main():
 
     passed = sum(r["passed"] for r in results)
     total_cost = sum(r["cost"] for r in results)
+    t = {k: sum(r.get(k, 0) for r in results) for k in ("input", "cache_read", "cache_write", "output")}
     print(f"\nscore: {passed}/{len(results)} = {100 * passed / len(results):.0f}%   "
           f"cost: ${total_cost:.3f}   avg {sum(r['seconds'] for r in results) / len(results):.1f}s per case")
+    print(f"tokens: {t['input']:,} uncached in, {t['cache_read']:,} cache reads, {t['cache_write']:,} cache writes, "
+          f"{t['output']:,} out")
     if args.repeat > 1:                                   # flaky = passes sometimes, fails sometimes
         for cid in dict.fromkeys(r["id"] for r in results):
             runs = [r["passed"] for r in results if r["id"] == cid]
@@ -169,7 +183,9 @@ async def main():
     if not args.only:
         stamp = time.strftime("%Y%m%d-%H%M%S")
         with open(os.path.join(HERE, "eval_results", f"run-{stamp}.json"), "w") as f:
-            json.dump({"score": f"{passed}/{len(results)}", "cost": total_cost, "results": results}, f, indent=1)
+            json.dump({"score": f"{passed}/{len(results)}", "cost": total_cost, "tokens": t,
+                       "config": {"model": agent.model, "effort": agent.effort, "cache": agent.cache},
+                       "results": results}, f, indent=1)
     if passed / len(results) < args.min_score:
         print(f"FAILED the gate: {passed}/{len(results)} is under the minimum {args.min_score:.0%}")
         sys.exit(1)                                       # a non-zero exit code is what makes CI go red

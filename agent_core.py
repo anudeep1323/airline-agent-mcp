@@ -18,6 +18,7 @@ One user message = call Claude until it stops asking for tools, running each too
 Pending approvals found in tool results are returned to the CALLER, which asks the human.
 """
 import json
+import os
 import time
 
 import anthropic
@@ -25,8 +26,14 @@ import anthropic
 import audit
 from resilience import CircuitBreaker, CircuitOpen
 
-MODEL = "claude-opus-5-5"
-PRICE_IN, PRICE_OUT = 4.00, 20.00              # USD per million tokens (Opus 5.5)
+# Model, effort and prompt caching are settings, so evals can compare them (AGENT_MODEL / AGENT_EFFORT / AGENT_CACHE).
+MODEL = os.environ.get("AGENT_MODEL", "claude-opus-5-5")
+EFFORT = os.environ.get("AGENT_EFFORT", "low")
+CACHE = os.environ.get("AGENT_CACHE", "on") == "on"
+# USD per million tokens: input, output, cache read, cache write (5-minute TTL = 1.25x input)
+PRICES = {"claude-opus-5-5": (4.00, 20.00, 0.20, 5.00),
+          "claude-haiku-5-5": (0.10, 0.50, 0.01, 0.125)}        # Haiku rates apply up to 100K-token prompts
+FALLBACK_MODELS = {"claude-opus-5-5"}          # Haiku 5.5 has no server-side refusal fallback: don't send the option
 MAX_STEPS = 8                                  # guardrail: max Claude calls per user message
 CLAUDE_TIMEOUT, MAX_RETRIES = 30.0, 2          # per attempt; SDK default is 600 s x 3 attempts (~30 min hung)
 HUMAN_ONLY = {"confirm_cancel"}                # tools the LLM must never see, so it can't approve itself
@@ -52,7 +59,10 @@ class ClaudeUnavailable(Exception):
 
 
 class Agent:
-    def __init__(self, mcp_session, tool_list):
+    def __init__(self, mcp_session, tool_list, model=None, effort=None, cache=None):
+        self.model = model or MODEL
+        self.effort = effort or EFFORT
+        self.cache = CACHE if cache is None else cache
         self.claude = anthropic.AsyncAnthropic(timeout=anthropic.Timeout(CLAUDE_TIMEOUT, connect=5.0),
                                                max_retries=MAX_RETRIES)
         self.breaker = CircuitBreaker(threshold=3, cooldown=30.0)
@@ -78,11 +88,14 @@ class Agent:
             audit.record("agent", "claude", "circuit_open", customer_id, detail={"step": step})
             raise ClaudeUnavailable("circuit open after repeated failures", e.retry_after) from e
         try:
+            extra = {}
+            if self.cache:                                 # Anthropic stores the processed prefix for 5 min
+                extra["cache_control"] = {"type": "ephemeral"}
+            if self.model in FALLBACK_MODELS:
+                extra.update(betas=["server-side-fallback-2026-07-01"], fallbacks="default")
             response = await self.claude.beta.messages.create(
-                model=MODEL, max_tokens=16000, system=SYSTEM, tools=self.tools, messages=messages,
-                output_config={"effort": "low"},
-                betas=["server-side-fallback-2026-07-01"], fallbacks="default",
-            )
+                model=self.model, max_tokens=16000, system=SYSTEM, tools=self.tools, messages=messages,
+                output_config={"effort": self.effort}, **extra)
         except anthropic.APIStatusError as e:
             if e.status_code < 500 and e.status_code not in (408, 409, 429):
                 raise                              # 400/401/404: a bug in OUR request -> stays a 500
@@ -107,12 +120,17 @@ class Agent:
             t0 = time.perf_counter()
             response = await self._call_claude(messages, customer_id, step)
             u = response.usage
-            step_cost = (u.input_tokens * PRICE_IN + u.output_tokens * PRICE_OUT) / 1e6
+            read = getattr(u, "cache_read_input_tokens", 0) or 0         # served from cache, 5-10% price
+            wrote = getattr(u, "cache_creation_input_tokens", 0) or 0    # stored this call, 1.25x price
+            p_in, p_out, p_read, p_write = PRICES[self.model]
+            step_cost = (u.input_tokens * p_in + u.output_tokens * p_out + read * p_read + wrote * p_write) / 1e6
             cost += step_cost
             audit.record("agent", "claude", response.stop_reason, customer_id, ms=round((time.perf_counter() - t0) * 1000),
-                         cost=round(step_cost, 6), detail={"step": step, "tokens_in": u.input_tokens, "tokens_out": u.output_tokens})
+                         cost=round(step_cost, 6), detail={"step": step, "model": self.model, "tokens_in": u.input_tokens,
+                                                "tokens_out": u.output_tokens, "cache_read": read, "cache_write": wrote})
             steps.append({"step": step, "type": "claude", "s": round(time.perf_counter() - t0, 2),
-                          "tokens_in": u.input_tokens, "tokens_out": u.output_tokens, "stop_reason": response.stop_reason})
+                          "tokens_in": u.input_tokens, "tokens_out": u.output_tokens, "cache_read": read,
+                          "cache_write": wrote, "stop_reason": response.stop_reason})
             messages.append({"role": "assistant", "content": response.content})      # keep ALL blocks
 
             if response.stop_reason == "refusal":

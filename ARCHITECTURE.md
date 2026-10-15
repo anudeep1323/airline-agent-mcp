@@ -326,3 +326,21 @@ Real numbers (faked outages):
 | conversation after 3 failed turns | "cancel ABC123" x3 | empty (rolled back) |
 | 10 users in a slow outage (0.5 s per failure) | Claude called 10x, 5.1 s total | 3x, 1.6 s; requests 4-10 answered in 4-7 ms |
 Recovery: after the cooldown one probe passes -> 200 -> breaker closed. pytest: 43 passed (9 new).
+
+## Build 15: cost & speed levers (AGENT_MODEL / AGENT_EFFORT / AGENT_CACHE, agent_eval.py --model/--effort/--no-cache)
+
+Decision: measure every lever on the same 17-case eval set; a cheaper setup only wins if the score holds.
+Prompt caching = Anthropic stores the processed prefix for 5 min; our code opts in (`cache_control`), keeps the prefix
+stable, and verifies via `cache_read_input_tokens`. Haiku 5.5 gets no `fallbacks` option (not supported there).
+
+| Config | Score | $ / run | avg per case | tokens (uncached / cache read / cache write / out) |
+|---|---|---|---|---|
+| Opus 5.5, low, no cache (baseline) | 17/17 | $0.226 | 3.9 s | - |
+| Opus 5.5, low, cache | 17/17 | $0.164 (-27%) | 3.8 s | 104 / 21,945 / 21,319 / 2,633 |
+| Haiku 5.5, low, cache (cold) | 17/17 | $0.0041 (55x cheaper) | 2.1 s | 106 / 23,459 / 21,586 / 2,634 |
+| Haiku 5.5, low, cache (warm, rerun) | 17/17 | $0.0020 | 2.0 s | 104 / 42,605 / 629 / 2,646 |
+
+Finding: with one automatic breakpoint at the end of each conversation, every case writes its own copy of the shared
+system prompt + tools, so cache WRITES were 65% of the Opus bill. Next (not built): a second breakpoint at the end of
+the system prompt, so the shared ~1,000-token prefix is written once and read by every case and user.
+Not tested: effort low vs medium (runs 2 and 3 both used the default "low"). Default stays Opus 5.5.
