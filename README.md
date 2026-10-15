@@ -52,6 +52,9 @@ export JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
 APP_ENV=dev docker compose up --build     # API on :8000, UI on :8501 (omit APP_ENV for production mode)
 ```
 
+**Hosting for $0:** `render.yaml` deploys ONE free Render web service running `serve_all.py` (UI public, API private
+inside the container). Render builds from the Dockerfile and deploys a commit only after its GitHub checks pass.
+
 Every push to `main` that passes tests and evals publishes the image to `ghcr.io/anudeep1323/airline-agent-mcp`.
 
 Dev test accounts are seeded from `DEV_USERS` in `airline_server.py` **only when `APP_ENV=dev`** (their passwords are

@@ -73,9 +73,15 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' -H 'content-type: application/json' \
                 -d "{\"username\":\"andy\",\"password\":\"$PW\"}" localhost:8000/v1/login)" = 401
           docker image ls airline-agent:ci --format 'image size: {{.Size}}'
+      - name: Smoke test the one-container mode used for hosting (serve_all.py, UI on $PORT)
+        run: |
+          docker run -d --name all -p 10000:10000 -e JWT_SECRET="$(openssl rand -hex 32)" airline-agent:ci python serve_all.py
+          for i in $(seq 1 60); do curl -sf localhost:10000/_stcore/health && break; sleep 1; done
+          echo; test "$(curl -s -o /dev/null -w '%{http_code}' localhost:10000/)" = 200
+          docker stats --no-stream --format 'memory: {{.MemUsage}}' all
       - name: Show container logs if anything failed
         if: failure()
-        run: docker logs api
+        run: docker logs api; docker logs all || true
       - name: Publish to GitHub Container Registry (main branch only)
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         run: |

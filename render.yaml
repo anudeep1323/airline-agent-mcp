@@ -1,0 +1,27 @@
+# Render Blueprint: the whole deployment described in code ("infrastructure as code").
+# One FREE web service runs serve_all.py: the UI on the public port, the API privately inside the container.
+# Free tier: sleeps after 15 min idle (~1 min to wake), 512 MB RAM, files (SQLite) reset on restart.
+services:
+  - type: web
+    name: airline-agent
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: python serve_all.py
+    healthCheckPath: /_stcore/health          # Streamlit's built-in health endpoint
+    autoDeployTrigger: checksPass             # CD: deploy a commit only after its GitHub checks are green
+    envVars:
+      - key: APP_ENV
+        value: production                     # no public dev accounts
+      - key: USER_DAILY_BUDGET
+        value: "0.10"
+      - key: DAILY_BUDGET
+        value: "1.00"
+      - key: JWT_SECRET
+        generateValue: true                   # Render creates a random secret; nobody ever sees it
+      - key: ANTHROPIC_API_KEY
+        sync: false                           # you paste it in Render's dashboard, never in this repo
+      - key: SEED_USERS
+        sync: false                           # your private accounts, e.g. [["cust_andy","andy","Andy","<a password>"]]

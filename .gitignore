@@ -9,6 +9,8 @@
 !Dockerfile
 !.dockerignore
 !docker-compose.yml
+!render.yaml
+!serve_all.py
 !.github/
 !.github/workflows/
 !.github/workflows/*.yml
