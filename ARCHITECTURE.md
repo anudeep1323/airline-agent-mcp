@@ -280,3 +280,24 @@ Real run 38759253517: tests 55 s, evals 5 s (no secret: skipped), docker 63 s. C
 (digest sha256:6aa98817...). Image is 609 MB, mostly Streamlit's dependencies (pandas, pyarrow): the cost of option A.
 Mistake on the way: on macOS `Dockerfile` and `dockerfile` are the same file; the old RAG one was overwritten and
 restored as Dockerfile.rag (kept local).
+
+## Build 13: production hardening (secure-by-default accounts, daily spending caps)
+
+Decisions: **secure by default**: public dev accounts only with `APP_ENV=dev`; unset = production, accounts only from
+`SEED_USERS`. Rejected: dev-by-default (one forgotten setting = public passwords live). **Caps from the audit log**:
+`SUM(cost)` since midnight UTC, checked before the agent runs: per user $0.10 -> 429, everyone $1.00 -> 503 (soft cap).
+
+```mermaid
+flowchart LR
+    L[POST /v1/login] --> A{"APP_ENV=dev?"}
+    A -->|yes| DEV[public test accounts]
+    A -->|"no / unset"| SEED["SEED_USERS only<br/>(none = locked)"]
+    C[POST /chat] --> U{"user spent >= $0.10 today?"}
+    U -->|yes| R429[429, $0]
+    U -->|no| G{"everyone >= $1.00?"}
+    G -->|yes| R503[503, $0]
+    G -->|no| AG[run the agent]
+```
+
+Real numbers: 34 tests (6 new), sabotage of each guard -> exactly its test failed. CI run 38766334813: tests 34 s,
+docker 51 s; inside the real container the public dev password -> 401.
