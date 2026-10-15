@@ -1,5 +1,5 @@
 """
-Brute-force the login and check the rate limiter. Needs the service running on :8000 (any JWT_SECRET).
+Brute-force the login and check the rate limiter. Needs the service running on :8000 with APP_ENV=dev (any JWT_SECRET).
   python3 rate_limit_check.py
 """
 import asyncio

@@ -6,14 +6,17 @@ Terminal client for the airline agent. The loop itself lives in agent_core.py (s
 """
 import asyncio
 import json
+import os
 import sys
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+import airline_server
 from agent_core import Agent
 
-SERVER = StdioServerParameters(command=sys.executable, args=["airline_server.py"])
+os.environ.setdefault("APP_ENV", "dev")                   # local dev tool: use the public test accounts
+SERVER = StdioServerParameters(command=sys.executable, args=["airline_server.py"], env=airline_server.child_env())
 GREY, END = "\033[90m", "\033[0m"
 
 

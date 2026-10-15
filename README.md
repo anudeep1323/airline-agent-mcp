@@ -39,6 +39,7 @@ The first sections there (builds 1-1b) cover MCP basics from an earlier experime
 python3 -m venv .venv && source .venv/bin/activate
 python3 -m pip install -r requirements-agent.txt
 export ANTHROPIC_API_KEY=...                                            # your key, never committed
+export APP_ENV=dev                                                      # local only: seeds the public test accounts
 export JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
 python3 -m uvicorn airline_service:app --port 8000                     # terminal 1: the service
 python3 -m streamlit run ui.py                                          # terminal 2: chat UI on :8501
@@ -48,12 +49,14 @@ Or with Docker (same image runs the API and the UI):
 
 ```bash
 export JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
-docker compose up --build          # API on :8000, UI on :8501
+APP_ENV=dev docker compose up --build     # API on :8000, UI on :8501 (omit APP_ENV for production mode)
 ```
 
 Every push to `main` that passes tests and evals publishes the image to `ghcr.io/anudeep1323/airline-agent-mcp`.
 
-Dev test accounts are seeded from `DEV_USERS` in `airline_server.py` (for local development only).
+Dev test accounts are seeded from `DEV_USERS` in `airline_server.py` **only when `APP_ENV=dev`** (their passwords are
+public in this repo). Without it the service runs in production mode: accounts come only from `SEED_USERS`, and Claude
+spend is capped at `USER_DAILY_BUDGET` ($0.10) per user and `DAILY_BUDGET` ($1.00) in total per UTC day.
 
 ```bash
 python3 -m pytest              # code checks: fake Claude, free, ~11 s

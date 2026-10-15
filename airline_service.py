@@ -4,6 +4,8 @@ The airline agent as a web service: any HTTP client (curl, Streamlit, a website)
 Run:   export JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
        python3 -m uvicorn airline_service:app --port 8000
 Docs:  http://localhost:8000/docs                    (interactive API page)
+Env:   APP_ENV=dev seeds the public test accounts (unset = production: only SEED_USERS, a JSON list)
+       USER_DAILY_BUDGET (default $0.10) and DAILY_BUDGET (default $1.00) cap Claude spend per UTC day
 
 Endpoints (all but /health, /ready, /v1/login need  Authorization: Bearer <token>):
   POST /v1/login -> {"username", "password"}                     -> a 30-minute JWT
@@ -13,6 +15,7 @@ Endpoints (all but /health, /ready, /v1/login need  Authorization: Bearer <token
   POST /approve  -> {"conversation_id", "approval_id", "approve"} -> the human's decision, executed (no LLM involved)
   /v1/...        -> REST API for apps, no LLM (see bookings_api.py)
 """
+import os
 import sys
 import time
 import uuid
@@ -31,6 +34,8 @@ from agent_core import Agent
 from auth import current_customer
 
 STATE = {"agent": None}
+USER_DAILY_BUDGET = float(os.environ.get("USER_DAILY_BUDGET", "0.10"))   # $ of Claude per customer per UTC day
+DAILY_BUDGET = float(os.environ.get("DAILY_BUDGET", "1.00"))             # $ of Claude for everyone per UTC day
 CONVERSATIONS: dict[tuple, list] = {}      # (customer_id, conversation_id) -> messages: you can't open someone else's chat
 
 
@@ -41,7 +46,7 @@ async def lifespan(app: FastAPI):
     t0 = time.time()
     async with AsyncExitStack() as stack:
         server = StdioServerParameters(command=sys.executable, args=["airline_server.py"],
-                                       env={"AIRLINE_DB": airline_server.DB})   # the MCP child uses OUR db file
+                                       env=airline_server.child_env())   # same DB file + APP_ENV as us
         read, write = await stack.enter_async_context(stdio_client(server))
         mcp = await stack.enter_async_context(ClientSession(read, write))
         await mcp.initialize()
@@ -100,6 +105,15 @@ def ready():
 
 @app.post("/chat")
 async def chat(body: ChatIn, customer_id: str = Depends(current_customer)):
+    # spending caps: checked BEFORE the agent runs, so a blocked request costs $0.
+    # Soft cap: requests already in flight can overshoot a little (each is limited to MAX_STEPS Claude calls).
+    until_midnight = str(int(86400 - time.time() % 86400))
+    if audit.spent_today(customer_id) >= USER_DAILY_BUDGET:
+        raise HTTPException(status_code=429, detail="daily assistant limit reached, try again tomorrow",
+                            headers={"Retry-After": until_midnight})
+    if audit.spent_today() >= DAILY_BUDGET:
+        raise HTTPException(status_code=503, detail="assistant is resting for today (daily budget reached)",
+                            headers={"Retry-After": until_midnight})
     messages = CONVERSATIONS.setdefault((customer_id, body.conversation_id), [])
     r = await STATE["agent"].run(messages, body.message, customer_id)
     return {"status": "needs_approval" if r["approvals"] else "done", "conversation_id": body.conversation_id, **r}

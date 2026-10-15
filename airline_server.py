@@ -63,7 +63,8 @@ FLIGHTS = [
     ("SK105", "SFO", "LAX", "2026-10-20", "18:45", 149),
     ("SK201", "LAX", "SEA", "2026-10-21", "09:15", 179),
 ]
-# DEV ONLY test accounts (customer_id, username, name, password). Real systems never keep passwords in code.
+# DEV ONLY test accounts (customer_id, username, name, password). Created ONLY when APP_ENV=dev, because these
+# passwords are public in the repo. Secure by default: if APP_ENV is unset, we are in production.
 # triggers make audit_log append-only: the DATABASE refuses edits, so not even a bug in our code can rewrite history
 # (kept separate from SCHEMA because a trigger body contains ";")
 TRIGGERS = [
@@ -83,6 +84,20 @@ _init_lock = threading.Lock()                                       # one setup 
 _initialised = False
 
 
+def seed_users():
+    """dev: the public test accounts. production: only accounts from the SEED_USERS env var (a JSON list of
+    [customer_id, username, name, password]); none at all if it's unset, so the app starts locked, not open."""
+    if os.environ.get("APP_ENV") == "dev":
+        return DEV_USERS
+    return [tuple(u) for u in json.loads(os.environ.get("SEED_USERS") or "[]")]
+
+
+def child_env():
+    """Settings an MCP child process must share with us (passed explicitly: the child gets no other env vars)."""
+    env = {k: os.environ[k] for k in ("APP_ENV", "SEED_USERS") if k in os.environ}
+    return {**env, "AIRLINE_DB": DB}
+
+
 def init_db():
     """Create + seed the tables exactly once, even with 100 requests (or 2 processes) arriving together."""
     conn = sqlite3.connect(DB, timeout=30, isolation_level=None)     # timeout: wait for the lock instead of failing
@@ -91,7 +106,7 @@ def init_db():
         if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='customers'").fetchone():   # check INSIDE the lock
             for statement in [x for x in SCHEMA.split(";") if x.strip()] + TRIGGERS:
                 conn.execute(statement)
-            conn.executemany("INSERT INTO customers VALUES (?,?,?,?)", [(c, u, n, hash_password(p)) for c, u, n, p in DEV_USERS])
+            conn.executemany("INSERT INTO customers VALUES (?,?,?,?)", [(c, u, n, hash_password(p)) for c, u, n, p in seed_users()])
             conn.executemany("INSERT INTO flights (flight_id, origin, destination, date, departs, price) VALUES (?,?,?,?,?,?)", FLIGHTS)
             conn.executemany("INSERT INTO seats VALUES (?,?,NULL)", [(f[0], s) for f in FLIGHTS for s in SEATS])
             for conf, cust, name, flight, seat in BOOKINGS:

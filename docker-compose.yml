@@ -8,6 +8,10 @@ services:
     environment:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET to a random 32+ char string}
+      APP_ENV: ${APP_ENV:-production}       # production unless you say otherwise: no public dev accounts
+      SEED_USERS: ${SEED_USERS:-}           # production accounts, JSON: [["cust_id","user","Name","password"]]
+      USER_DAILY_BUDGET: ${USER_DAILY_BUDGET:-0.10}
+      DAILY_BUDGET: ${DAILY_BUDGET:-1.00}
 
   ui:
     image: ghcr.io/anudeep1323/airline-agent-mcp:latest     # same image, different command

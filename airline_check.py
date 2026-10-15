@@ -1,12 +1,15 @@
 """Test client for airline_server.py over stdio (no LLM: I pick every call).   python3 airline_check.py"""
 import asyncio
 import json
+import os
 import sys
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-SERVER = StdioServerParameters(command=sys.executable, args=["airline_server.py"])
+import airline_server
+os.environ.setdefault("APP_ENV", "dev")                   # local dev tool: use the public test accounts
+SERVER = StdioServerParameters(command=sys.executable, args=["airline_server.py"], env=airline_server.child_env())
 
 
 async def main():

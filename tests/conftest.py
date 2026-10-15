@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("JWT_SECRET", "test-secret-" + "x" * 32)   # before the app is imported
+os.environ.setdefault("APP_ENV", "dev")                          # tests use the public dev accounts
 
 import airline_server  # noqa: E402
 import airline_service  # noqa: E402
@@ -24,6 +25,7 @@ PASSWORDS = {u: p for _, u, _, p in airline_server.DEV_USERS}
 def fresh_db(tmp_path, monkeypatch):
     path = str(tmp_path / "airline.db")
     monkeypatch.setenv("AIRLINE_DB", path)
+    monkeypatch.setenv("APP_ENV", "dev")                             # a test can override it (production tests do)
     monkeypatch.setattr(airline_server, "DB", path)
     monkeypatch.setattr(airline_server, "_initialised", False)      # run setup again for the new file
     return path

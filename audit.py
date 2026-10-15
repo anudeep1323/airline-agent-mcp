@@ -23,6 +23,20 @@ def _clean(value):
     return value
 
 
+def spent_today(customer_id=None):
+    """Claude dollars spent since midnight UTC, for one customer or (None) for everyone. The audit log already
+    records the cost of every Claude call, so the spending cap is just a SUM over it."""
+    now = time.time()
+    midnight = now - now % 86400
+    sql, args = "SELECT COALESCE(SUM(cost), 0) FROM audit_log WHERE channel = 'agent' AND at >= ?", [midnight]
+    if customer_id:
+        sql, args = sql + " AND customer_id = ?", args + [customer_id]
+    conn = airline_server.db()
+    total = conn.execute(sql, args).fetchone()[0]
+    conn.close()
+    return total
+
+
 def record(channel, action, status, customer_id=None, ms=None, cost=None, detail=None):
     conn = airline_server.db()
     with conn:

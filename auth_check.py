@@ -1,7 +1,7 @@
 """
 Attack the service as a malicious customer and check every attempt is blocked. No Claude needed.
 
-  terminal 1:  export JWT_SECRET=...; python3 -m uvicorn airline_service:app --port 8000
+  terminal 1:  export JWT_SECRET=... APP_ENV=dev; python3 -m uvicorn airline_service:app --port 8000
   terminal 2:  JWT_SECRET=<same> python3 auth_check.py      (needs the secret only to forge an EXPIRED token)
 """
 import os

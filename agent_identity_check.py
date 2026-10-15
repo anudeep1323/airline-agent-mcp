@@ -5,15 +5,18 @@ and even passes customer_id="cust_riya" itself.      python3 agent_identity_chec
 """
 import asyncio
 import json
+import os
 import sys
 from types import SimpleNamespace as NS
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+import airline_server
 from agent_core import Agent
 
-SERVER = StdioServerParameters(command=sys.executable, args=["airline_server.py"])
+os.environ.setdefault("APP_ENV", "dev")                   # local dev tool: use the public test accounts
+SERVER = StdioServerParameters(command=sys.executable, args=["airline_server.py"], env=airline_server.child_env())
 
 
 def fake_claude(tool_input):

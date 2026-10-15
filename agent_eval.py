@@ -30,6 +30,7 @@ EVAL_DB = os.path.join(HERE, "eval_results", "eval.db")
 PRISTINE = os.path.join(HERE, "eval_results", "pristine.db")
 os.makedirs(os.path.dirname(EVAL_DB), exist_ok=True)
 os.environ["AIRLINE_DB"] = EVAL_DB                       # set BEFORE importing airline_server: never touch airline.db
+os.environ.setdefault("APP_ENV", "dev")                   # evals use the public test accounts
 
 from mcp import ClientSession, StdioServerParameters      # noqa: E402
 from mcp.client.stdio import stdio_client                 # noqa: E402
@@ -37,7 +38,7 @@ from mcp.client.stdio import stdio_client                 # noqa: E402
 import airline_server                                     # noqa: E402
 from agent_core import Agent                              # noqa: E402
 
-SERVER = StdioServerParameters(command=sys.executable, args=["airline_server.py"], env={"AIRLINE_DB": EVAL_DB})
+SERVER = StdioServerParameters(command=sys.executable, args=["airline_server.py"], env=airline_server.child_env())
 
 
 def make_pristine():

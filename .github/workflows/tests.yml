@@ -68,6 +68,10 @@ jobs:
           for i in $(seq 1 30); do curl -sf localhost:8000/ready && break; sleep 1; done
           echo; curl -sf localhost:8000/ready | grep -q '"cancel_booking"'            # MCP child started inside the container
           test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8000/v1/bookings/ABC123)" = 401   # auth is on
+          # production by default: the dev password that is public in this repo must NOT work
+          PW=$(docker exec api python -c "import airline_server as s; print(s.DEV_USERS[0][3])")
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'content-type: application/json' \
+                -d "{\"username\":\"andy\",\"password\":\"$PW\"}" localhost:8000/v1/login)" = 401
           docker image ls airline-agent:ci --format 'image size: {{.Size}}'
       - name: Show container logs if anything failed
         if: failure()
