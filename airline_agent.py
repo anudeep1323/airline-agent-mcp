@@ -13,7 +13,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 import airline_server
-from agent_core import Agent
+from agent_core import Agent, ClaudeUnavailable
 
 os.environ.setdefault("APP_ENV", "dev")                   # local dev tool: use the public test accounts
 SERVER = StdioServerParameters(command=sys.executable, args=["airline_server.py"], env=airline_server.child_env())
@@ -47,7 +47,11 @@ async def main():
                 text = (await asyncio.to_thread(input, "you: ")).strip()
                 if text.lower() in {"", "quit", "exit"}:
                     break
-                r = await agent.run(messages, text, customer_id)
+                try:
+                    r = await agent.run(messages, text, customer_id)
+                except ClaudeUnavailable as e:
+                    print(f"agent: (assistant unavailable: {e.reason}; try again in {e.retry_after}s)\n")
+                    continue
                 show_steps(r["steps"])
                 print("agent:", r["answer"])
                 for a in r["approvals"]:                       # the human decides, not the LLM

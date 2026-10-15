@@ -21,6 +21,7 @@
 !auth.py
 !audit.py
 !audit_report.py
+!resilience.py
 !agent_core.py
 !airline_agent.py
 !airline_service.py

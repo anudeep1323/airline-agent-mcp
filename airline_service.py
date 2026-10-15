@@ -22,6 +22,7 @@ import uuid
 from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from pydantic import BaseModel
@@ -30,7 +31,7 @@ import airline_server
 import audit
 import auth
 import bookings_api
-from agent_core import Agent
+from agent_core import Agent, ClaudeUnavailable
 from auth import current_customer
 
 STATE = {"agent": None}
@@ -72,6 +73,14 @@ async def audit_every_request(request: Request, call_next):
                  detail=getattr(request.state, "audit_detail", None))
     response.headers["X-Request-ID"] = rid                     # a customer can quote it to support
     return response
+
+
+@app.exception_handler(ClaudeUnavailable)
+async def claude_unavailable(request: Request, exc: ClaudeUnavailable):
+    """Claude's outage is not our bug: 503 + Retry-After, so clients know to wait and retry. 500 = OUR bugs only."""
+    return JSONResponse(status_code=503, headers={"Retry-After": str(exc.retry_after)},
+                        content={"detail": "the assistant is temporarily unavailable, please retry",
+                                 "reason": exc.reason, "retry_after": exc.retry_after})
 
 
 app.include_router(auth.router)                                # POST /v1/login (public)

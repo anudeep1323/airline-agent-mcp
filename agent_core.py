@@ -10,6 +10,10 @@ Freshness: before each new message, bookings Claude already saw in this conversa
 If one changed, a system message with the current record is APPENDED, so Claude never answers from stale data.
 (Append-only: deleting old tool results would break Opus 5.5's history check.)
 
+Resilience: Claude calls time out after 30 s per attempt (the SDK retries twice with backoff); a circuit breaker
+refuses calls instantly after 3 failures in a row; any failed turn is ROLLED BACK so it never piles up in memory.
+Callers get ClaudeUnavailable(retry_after) and turn it into a 503.
+
 One user message = call Claude until it stops asking for tools, running each tool through MCP.
 Pending approvals found in tool results are returned to the CALLER, which asks the human.
 """
@@ -19,10 +23,12 @@ import time
 import anthropic
 
 import audit
+from resilience import CircuitBreaker, CircuitOpen
 
 MODEL = "claude-opus-5-5"
 PRICE_IN, PRICE_OUT = 4.00, 20.00              # USD per million tokens (Opus 5.5)
 MAX_STEPS = 8                                  # guardrail: max Claude calls per user message
+CLAUDE_TIMEOUT, MAX_RETRIES = 30.0, 2          # per attempt; SDK default is 600 s x 3 attempts (~30 min hung)
 HUMAN_ONLY = {"confirm_cancel"}                # tools the LLM must never see, so it can't approve itself
 INJECTED = "customer_id"                       # parameter filled by our code from the login token, hidden from the LLM
 LIVE_UPDATE = "[live update] booking "         # prefix of the system messages that carry refreshed records
@@ -37,16 +43,61 @@ SYSTEM = """You are the support agent for SkyLine airline. Help customers find f
 - Keep replies short: 1-3 sentences, or a small table for flight lists."""
 
 
+class ClaudeUnavailable(Exception):
+    """Claude is down, overloaded, rate-limited or too slow: not OUR bug. The caller should answer 503."""
+
+    def __init__(self, reason, retry_after):
+        super().__init__(reason)
+        self.reason, self.retry_after = reason, retry_after
+
+
 class Agent:
     def __init__(self, mcp_session, tool_list):
-        self.claude = anthropic.AsyncAnthropic()
+        self.claude = anthropic.AsyncAnthropic(timeout=anthropic.Timeout(CLAUDE_TIMEOUT, connect=5.0),
+                                               max_retries=MAX_RETRIES)
+        self.breaker = CircuitBreaker(threshold=3, cooldown=30.0)
         self.mcp = mcp_session
         self.tools = [{"name": t.name, "description": t.description, "input_schema": _hide(t.inputSchema, INJECTED)}
                       for t in tool_list if t.name not in HUMAN_ONLY]
         self.needs_customer = {t.name for t in tool_list if INJECTED in t.inputSchema.get("properties", {})}
 
     async def run(self, messages, text, customer_id):
-        """Append `text` to `messages` (mutated in place: that IS the conversation memory) and run the loop."""
+        """Append `text` to `messages` (mutated in place: that IS the conversation memory) and run the loop.
+        If anything fails, the conversation is rolled back to exactly how it was before this message."""
+        before = len(messages)
+        try:
+            return await self._run_turn(messages, text, customer_id)
+        except BaseException:
+            del messages[before:]                  # removing only the unanswered tail: nothing after it to invalidate
+            raise
+
+    async def _call_claude(self, messages, customer_id, step):
+        try:
+            self.breaker.check()
+        except CircuitOpen as e:                   # refused instantly: no waiting, no API call, $0
+            audit.record("agent", "claude", "circuit_open", customer_id, detail={"step": step})
+            raise ClaudeUnavailable("circuit open after repeated failures", e.retry_after) from e
+        try:
+            response = await self.claude.beta.messages.create(
+                model=MODEL, max_tokens=16000, system=SYSTEM, tools=self.tools, messages=messages,
+                output_config={"effort": "low"},
+                betas=["server-side-fallback-2026-07-01"], fallbacks="default",
+            )
+        except anthropic.APIStatusError as e:
+            if e.status_code < 500 and e.status_code not in (408, 409, 429):
+                raise                              # 400/401/404: a bug in OUR request -> stays a 500
+            reason = f"HTTP {e.status_code}"
+        except anthropic.APIConnectionError as e:  # includes APITimeoutError
+            reason = type(e).__name__
+        else:
+            self.breaker.success()
+            return response
+        self.breaker.failure()                     # only upstream problems count towards opening the breaker
+        audit.record("agent", "claude", "unavailable", customer_id, detail={"step": step, "reason": reason,
+                                                                          "breaker": self.breaker.state})
+        raise ClaudeUnavailable(reason, retry_after=30 if self.breaker.state == "open" else 10)
+
+    async def _run_turn(self, messages, text, customer_id):
         started, cost, steps, approvals = time.perf_counter(), 0.0, [], []
         messages.append({"role": "user", "content": text})
         steps += await self._refresh_seen_bookings(messages, customer_id)
@@ -54,11 +105,7 @@ class Agent:
 
         for step in range(1, MAX_STEPS + 1):
             t0 = time.perf_counter()
-            response = await self.claude.beta.messages.create(
-                model=MODEL, max_tokens=16000, system=SYSTEM, tools=self.tools, messages=messages,
-                output_config={"effort": "low"},
-                betas=["server-side-fallback-2026-07-01"], fallbacks="default",
-            )
+            response = await self._call_claude(messages, customer_id, step)
             u = response.usage
             step_cost = (u.input_tokens * PRICE_IN + u.output_tokens * PRICE_OUT) / 1e6
             cost += step_cost

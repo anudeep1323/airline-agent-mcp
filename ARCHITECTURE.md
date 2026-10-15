@@ -301,3 +301,28 @@ flowchart LR
 
 Real numbers: 34 tests (6 new), sabotage of each guard -> exactly its test failed. CI run 38766334813: tests 34 s,
 docker 51 s; inside the real container the public dev password -> 401.
+
+## Build 14: resilience: when Claude fails (resilience.py, agent_core._call_claude)
+
+Decisions: 30 s per-attempt timeout + the SDK's own 2 retries (don't re-implement backoff); upstream failures ->
+**503 + Retry-After** (500 stays for OUR bugs, e.g. a 400 from Anthropic); **rollback** of the whole failed turn;
+**circuit breaker** (3 failures -> open 30 s -> one half-open probe). Rejected: no breaker (every user waits the timeout).
+
+```mermaid
+flowchart LR
+    C[POST /chat] --> B{breaker}
+    B -->|open| F["503 instantly<br/>Retry-After 30, $0"]
+    B -->|"closed / half-open probe"| CL["Claude<br/>30 s timeout, 2 SDK retries"]
+    CL -->|ok| OK[answer; breaker reset]
+    CL -->|"timeout / network / 429 / 5xx"| RB["roll back the turn<br/>breaker.failure()<br/>503 + Retry-After"]
+    CL -->|"400 (our bug)"| E[500, breaker untouched]
+```
+
+Real numbers (faked outages):
+| | Before | After |
+|---|---|---|
+| worst-case hang | ~30 min (600 s x 3 attempts) | ~1.5 min (30 s x 3) |
+| timeout / 529 / network down | 500 "Internal Server Error" x3 | 503 + Retry-After 10/10/30 |
+| conversation after 3 failed turns | "cancel ABC123" x3 | empty (rolled back) |
+| 10 users in a slow outage (0.5 s per failure) | Claude called 10x, 5.1 s total | 3x, 1.6 s; requests 4-10 answered in 4-7 ms |
+Recovery: after the cooldown one probe passes -> 200 -> breaker closed. pytest: 43 passed (9 new).
